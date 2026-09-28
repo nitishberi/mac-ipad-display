@@ -21,10 +21,22 @@ After one-time setup (with a monitor), the Mac auto-logins, this agent starts, w
 ## Quick start (on your Mac mini)
 
 ```bash
-git clone <this-repo> && cd mac-ipad-display
+git clone https://github.com/nitishberi/mac-ipad-display.git
+cd mac-ipad-display
 chmod +x Scripts/*.sh Scripts/hooks/*.sh
 ./Scripts/install.sh
 ```
+
+Or install from a **DMG** (Releases): open the `.dmg`, drag `MacIPadDisplay.app` to Applications, launch once, then configure via the menu bar.
+
+### Build a DMG yourself (macOS)
+
+```bash
+./Scripts/make-dmg.sh
+# → dist/MacIPadDisplay-1.0.0.dmg
+```
+
+GitHub Actions also builds a DMG on `macos-14` for version tags (`v1.0.0`) or via workflow dispatch.
 
 Then:
 
