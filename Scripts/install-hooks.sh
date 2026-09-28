@@ -11,8 +11,25 @@ if [[ -z "${BIN}" || ! -x "$BIN" ]]; then
   exit 1
 fi
 
+CONFIG="${HOME}/Library/Application Support/MacIPadDisplay/config.json"
+if [[ ! -f "$CONFIG" ]]; then
+  echo "Config missing — run: mac-ipad-display init-config" >&2
+  exit 1
+fi
+
+# Read notifyAuthToken from config (python for reliable JSON; fallback to plutil/sed-less jq).
+AUTH=""
+if command -v python3 >/dev/null 2>&1; then
+  AUTH="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("notifyAuthToken") or "")' "$CONFIG")"
+elif command -v jq >/dev/null 2>&1; then
+  AUTH="$(jq -r '.notifyAuthToken // empty' "$CONFIG")"
+fi
+if [[ -z "$AUTH" ]]; then
+  echo "notifyAuthToken missing — run: mac-ipad-display init-config" >&2
+  exit 1
+fi
+
 HOST="$(scutil --get ComputerName 2>/dev/null || hostname)"
-# Neutralize shell metacharacters before embedding in hook scripts.
 HOST_SAFE="$(printf '%s' "$HOST" | tr -cd 'A-Za-z0-9._ -' | cut -c1-64)"
 BIN_SAFE="$BIN"
 case "$BIN_SAFE" in
@@ -26,14 +43,24 @@ ensure_hook() {
   local file="$1"
   local event="$2"
   local title="$3"
-  # Use single-quoted argv where possible; expand only known-safe values.
   local line
-  line="$(printf '%q notify %q %q "Host=%s method=${AUTH_METHOD:-unknown} failures=${TOTAL_FAILURES:-0}"' \
-    "$BIN_SAFE" "$event" "$title" "$HOST_SAFE")"
+  # Auth token passed via env so it is not argv-visible to every `ps` reader on some systems
+  # still appears in the script file — chmod 700 below.
+  line="$(printf 'MAC_IPAD_DISPLAY_NOTIFY_AUTH=%q %q notify --auth %q %q %q "Host=%s method=${AUTH_METHOD:-unknown} failures=${TOTAL_FAILURES:-0}"' \
+    "$AUTH" "$BIN_SAFE" "$AUTH" "$event" "$title" "$HOST_SAFE")"
   touch "$file"
   chmod 700 "$file"
   if grep -q 'mac-ipad-display notify' "$file" 2>/dev/null; then
-    echo "Hook already present in $file"
+    # Refresh existing hook lines so auth stays current
+    grep -v 'mac-ipad-display notify' "$file" > "${file}.tmp" || true
+    {
+      cat "${file}.tmp"
+      echo "# MacIPadDisplay safety notify"
+      echo "$line"
+    } > "$file"
+    rm -f "${file}.tmp"
+    chmod 700 "$file"
+    echo "Updated hook in $file"
   else
     {
       echo ""
@@ -53,5 +80,6 @@ If you have not installed loginwatcher yet:
   brew install ramana/tap/loginwatcher   # or follow https://github.com/RamanaRaj7/loginwatcher
 
 loginwatcher runs ~/.login_success and ~/.login_failure for you.
+Hooks require notifyAuthToken from config.json (chmod 600).
 
 EOF

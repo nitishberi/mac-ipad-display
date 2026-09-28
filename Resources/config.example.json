@@ -13,5 +13,7 @@
   "ntfyURL": "",
   "ntfyToken": "",
   "barkURL": "",
-  "notifyDedupeSeconds": 30
+  "notifyDedupeSeconds": 30,
+  "notifyAuthToken": "",
+  "launchAgentKeepAliveOnCrashOnly": true
 }

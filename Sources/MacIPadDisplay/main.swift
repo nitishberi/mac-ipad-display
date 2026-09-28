@@ -49,12 +49,23 @@ func runCLI(command: String, args: [String]) throws {
     case "init-config":
         var prefs = Preferences.load()
         if let name = argValue(args, flag: "--ipad") { prefs.iPadName = name }
-        if let ntfy = argValue(args, flag: "--ntfy") { prefs.ntfyURL = ntfy }
+        if let ntfy = argValue(args, flag: "--ntfy") {
+            prefs.ntfyURL = ntfy
+        } else if prefs.ntfyURL.isEmpty && argValue(args, flag: "--bark") == nil {
+            // Generate a hard-to-guess topic; user must still add ntfyToken for ntfy.sh.
+            let topic = Preferences.randomNtfyTopic()
+            prefs.ntfyURL = "https://ntfy.sh/\(topic)"
+            print("Generated ntfy topic: \(topic)")
+            print("Subscribe on iPhone, then set ntfyToken (required for ntfy.sh).")
+        }
         if let token = argValue(args, flag: "--ntfy-token") { prefs.ntfyToken = token }
         if let bark = argValue(args, flag: "--bark") { prefs.barkURL = bark }
         if args.contains("--no-lock") { prefs.lockAfterFirstConnect = false }
+        if args.contains("--keepalive-always") { prefs.launchAgentKeepAliveOnCrashOnly = false }
+        let auth = prefs.ensureNotifyAuthToken()
         try prefs.save()
         print("Wrote \(Preferences.configURL.path)")
+        print("notifyAuthToken (for login hooks): \(auth)")
     case "config-path":
         print(Preferences.configURL.path)
     case "list":
@@ -107,19 +118,41 @@ func runCLI(command: String, args: [String]) throws {
         signal(SIGTERM) { _ in exit(0) }
         supervisor.runLoop()
     case "notify-test":
+        var prefs = Preferences.load()
+        _ = prefs.ensureNotifyAuthToken()
+        try? prefs.save()
         let notify = NotifySink(prefs: { Preferences.load() })
         let title = argValue(args, flag: "--title") ?? "MacIPadDisplay test"
         let body = argValue(args, flag: "--body") ?? "If you see this on your iPhone, notify is configured."
         notify.notify(event: .sessionStart, title: title, body: body, priority: .high)
         print("Sent test notification (check iPhone / logs).")
     case "notify":
-        // Used by loginwatcher hooks: notify <event> <title> <body...>
-        guard args.count >= 2 else {
-            throw CLIError("usage: \(programName) notify <event> <title> [body]")
+        // Used by loginwatcher hooks: notify --auth TOKEN <event> <title> [body...]
+        var prefs = Preferences.load()
+        if prefs.notifyAuthToken.isEmpty {
+            _ = prefs.ensureNotifyAuthToken()
+            try prefs.save()
         }
-        let event = NotifyEvent(rawValue: args[0]) ?? .sessionStart
-        let title = args[1]
-        let body = args.count > 2 ? args.dropFirst(2).joined(separator: " ") : title
+        let auth = argValue(args, flag: "--auth") ?? ProcessInfo.processInfo.environment["MAC_IPAD_DISPLAY_NOTIFY_AUTH"]
+        guard NotifySink.authorizeNotifyCLI(provided: auth, prefs: prefs) else {
+            throw CLIError("notify: unauthorized (pass --auth <notifyAuthToken> or set MAC_IPAD_DISPLAY_NOTIFY_AUTH)")
+        }
+        var cleaned: [String] = []
+        var i = 0
+        while i < args.count {
+            if args[i] == "--auth" {
+                i += 2
+                continue
+            }
+            cleaned.append(args[i])
+            i += 1
+        }
+        guard cleaned.count >= 2 else {
+            throw CLIError("usage: \(programName) notify --auth <token> <event> <title> [body]")
+        }
+        let event = NotifyEvent(rawValue: cleaned[0]) ?? .sessionStart
+        let title = cleaned[1]
+        let body = cleaned.count > 2 ? cleaned.dropFirst(2).joined(separator: " ") : title
         let priority: NotifyPriority = (event == .loginFailure || event == .reconnectExhausted) ? .urgent : .high
         NotifySink(prefs: { Preferences.load() }).notify(event: event, title: title, body: body, priority: priority)
     case "has-monitor":
@@ -186,10 +219,10 @@ COMMANDS:
   init-config [--ipad NAME] [--ntfy URL] [--ntfy-token T] [--bark URL] [--no-lock]
   config-path                  Print config.json path
   notify-test                  Send a test push to your iPhone
-  notify <event> <title> [body]  Used by loginwatcher hooks
+  notify --auth <token> <event> <title> [body]   loginwatcher hooks (auth required)
   has-monitor                  Exit 0 if a physical monitor is attached
   lock                         Lock the Mac now
-  install-agent [--menubar]    Install LaunchAgent at login
+  install-agent [--menubar]    Install LaunchAgent at login (crash-only KeepAlive)
   uninstall-agent              Remove LaunchAgent
   help | version
 
@@ -213,13 +246,15 @@ enum Installer {
     static func resolveBinary() throws -> String {
         let argv0 = CommandLine.arguments[0]
         if argv0.hasPrefix("/") { return argv0 }
-        var real = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let real = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent(argv0).standardizedFileURL.path
         if FileManager.default.isExecutableFile(atPath: real) { return real }
-        // Prefer installed location
         let homeBin = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".local/bin/mac-ipad-display").path
         if FileManager.default.isExecutableFile(atPath: homeBin) { return homeBin }
+        // App bundle binary
+        let appBin = "/Applications/MacIPadDisplay.app/Contents/MacOS/mac-ipad-display"
+        if FileManager.default.isExecutableFile(atPath: appBin) { return appBin }
         throw CLIError("could not resolve binary path; run from build product or install first")
     }
 
@@ -229,11 +264,16 @@ enum Installer {
         let logDir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Logs/MacIPadDisplay", isDirectory: true)
         try FileManager.default.createDirectory(at: logDir, withIntermediateDirectories: true)
+        let prefs = Preferences.load()
+        // Crash-only KeepAlive: do not respawn after a clean Quit (reduces sticky persistence).
+        let keepAlive: Any = prefs.launchAgentKeepAliveOnCrashOnly
+            ? ["SuccessfulExit": false]
+            : true
         let dict: [String: Any] = [
             "Label": label,
             "ProgramArguments": args,
             "RunAtLoad": true,
-            "KeepAlive": true,
+            "KeepAlive": keepAlive,
             "ThrottleInterval": 5,
             "StandardOutPath": logDir.appendingPathComponent("launchd.out.log").path,
             "StandardErrorPath": logDir.appendingPathComponent("launchd.err.log").path
