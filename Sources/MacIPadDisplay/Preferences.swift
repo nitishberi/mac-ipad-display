@@ -81,7 +81,7 @@ struct Preferences: Codable, Equatable {
 
     static func randomToken(bytes: Int) -> String {
         var buf = [UInt8](repeating: 0, count: bytes)
-        let status = SecRandomCopyBytes(kSecRandomNumberGenerator, bytes, &buf)
+        let status = SecRandomCopyBytes(nil, bytes, &buf)
         if status != errSecSuccess {
             buf = (0..<bytes).map { _ in UInt8.random(in: 0...255) }
         }
