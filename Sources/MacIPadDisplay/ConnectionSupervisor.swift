@@ -9,6 +9,7 @@ final class ConnectionSupervisor {
     private var stopRequested = false
     private var didLockAfterConnect = false
     private var consecutiveFailures = 0
+    private var didNotifyExhausted = false
     private var wasConnected = false
     private var lastHadPhysicalMonitor: Bool?
     private var displayCallbackRegistered = false
@@ -81,13 +82,16 @@ final class ConnectionSupervisor {
 
     private func attemptConnect() {
         if prefs.maxConsecutiveFailures > 0 && consecutiveFailures >= prefs.maxConsecutiveFailures {
-            notify.notify(
-                event: .reconnectExhausted,
-                title: "Mac mini — Sidecar gave up",
-                body: "Failed to connect to \(prefs.iPadName) \(consecutiveFailures) times.",
-                priority: .urgent
-            )
-            // Back off harder so we don't spam.
+            if !didNotifyExhausted {
+                didNotifyExhausted = true
+                notify.notify(
+                    event: .reconnectExhausted,
+                    title: "Mac mini — Sidecar gave up",
+                    body: "Failed to connect to \(prefs.iPadName) \(consecutiveFailures) times.",
+                    priority: .urgent
+                )
+            }
+            // Back off harder so we don't spam connect attempts.
             sleepInterval(max(10, prefs.stablePollSeconds * 5))
             return
         }
@@ -112,6 +116,7 @@ final class ConnectionSupervisor {
                     onConnected()
                     wasConnected = true
                     consecutiveFailures = 0
+                    didNotifyExhausted = false
                     return
                 } catch {
                     Log.info("wired connect failed, trying wireless: \(error)")
@@ -122,6 +127,7 @@ final class ConnectionSupervisor {
             onConnected()
             wasConnected = true
             consecutiveFailures = 0
+            didNotifyExhausted = false
         } catch {
             consecutiveFailures += 1
             Log.warn("connect attempt failed (\(consecutiveFailures)): \(error)")

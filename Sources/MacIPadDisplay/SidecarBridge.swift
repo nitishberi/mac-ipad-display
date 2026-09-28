@@ -127,8 +127,13 @@ final class SidecarBridge {
         return nil
     }
 
+    private let callLock = NSLock()
+
     @discardableResult
     func connect(nameQuery: String?, options: ConnectOptions) throws -> DeviceInfo {
+        callLock.lock()
+        defer { callLock.unlock() }
+
         guard let device = firstMatch(in: manager.devices(), query: nameQuery)
             ?? firstMatch(in: manager.connectedDevices(), query: nameQuery) else {
             throw BridgeError.noDevice
@@ -137,13 +142,8 @@ final class SidecarBridge {
             return DeviceInfo(name: Self.deviceName(device), identifier: Self.deviceID(device), connected: true)
         }
 
-        var finished = false
-        var failure: NSError?
-
-        let completion: (NSError?) -> Void = { err in
-            failure = err
-            finished = true
-        }
+        let state = CompletionState()
+        let completion: (NSError?) -> Void = { err in state.finish(err) }
 
         if options.wired, let wiredConfig = makeWiredConfig() {
             applySidebarTouchBar(to: wiredConfig, options: options)
@@ -155,27 +155,50 @@ final class SidecarBridge {
             manager.connect(toDevice: device, completion: completion)
         }
 
-        wait(upTo: options.timeout) { finished }
-        if !finished { throw BridgeError.timeout("connect") }
-        if let e = failure { throw BridgeError.connectFailed(e.localizedDescription) }
+        wait(upTo: options.timeout) { state.isFinished }
+        if !state.isFinished { throw BridgeError.timeout("connect") }
+        if let e = state.failure { throw BridgeError.connectFailed(e.localizedDescription) }
 
         return DeviceInfo(name: Self.deviceName(device), identifier: Self.deviceID(device), connected: true)
     }
 
     func disconnect(nameQuery: String?, timeout: TimeInterval = 20) throws {
+        callLock.lock()
+        defer { callLock.unlock() }
+
         guard let device = firstMatch(in: manager.connectedDevices(), query: nameQuery)
             ?? firstMatch(in: manager.devices(), query: nameQuery) else {
             throw BridgeError.noDevice
         }
-        var finished = false
-        var failure: NSError?
-        manager.disconnect(fromDevice: device) { err in
-            failure = err
-            finished = true
+        let state = CompletionState()
+        manager.disconnect(fromDevice: device) { err in state.finish(err) }
+        wait(upTo: timeout) { state.isFinished }
+        if !state.isFinished { throw BridgeError.timeout("disconnect") }
+        if let e = state.failure { throw BridgeError.disconnectFailed(e.localizedDescription) }
+    }
+
+    /// Synchronizes SidecarCore completion callbacks with the waiting thread.
+    private final class CompletionState: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _finished = false
+        private var _failure: NSError?
+
+        var isFinished: Bool {
+            lock.lock(); defer { lock.unlock() }
+            return _finished
         }
-        wait(upTo: timeout) { finished }
-        if !finished { throw BridgeError.timeout("disconnect") }
-        if let e = failure { throw BridgeError.disconnectFailed(e.localizedDescription) }
+
+        var failure: NSError? {
+            lock.lock(); defer { lock.unlock() }
+            return _failure
+        }
+
+        func finish(_ error: NSError?) {
+            lock.lock()
+            _failure = error
+            _finished = true
+            lock.unlock()
+        }
     }
 
     // MARK: - Private helpers

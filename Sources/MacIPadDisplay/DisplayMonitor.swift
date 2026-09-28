@@ -1,6 +1,10 @@
 import Foundation
 import CoreGraphics
 
+#if canImport(AppKit)
+import AppKit
+#endif
+
 /// Detects whether a non-Sidecar (physical / built-in) display is attached.
 enum DisplayMonitor {
     /// Returns true if at least one online display looks like a real monitor
@@ -14,36 +18,35 @@ enum DisplayMonitor {
             return false
         }
 
-        for i in 0..<Int(displayCount) {
-            let id = displays[i]
-            if CGDisplayIsOnline(id) == 0 { continue }
-            if isLikelySidecarOrVirtual(id) { continue }
-            // Built-in on MacBook/iMac counts as physical for stand-aside purposes.
-            return true
-        }
-        return false
+        let online = (0..<Int(displayCount)).map { displays[$0] }.filter { CGDisplayIsOnline($0) != 0 }
+        if online.isEmpty { return false }
+
+        let physical = online.filter { !isLikelySidecarOrVirtual($0, totalOnline: online.count) }
+        return !physical.isEmpty
     }
 
-    private static func isLikelySidecarOrVirtual(_ id: CGDirectDisplayID) -> Bool {
-        // Sidecar / AirPlay / Screen Sharing virtual displays often report as
-        // non-builtin and may lack a traditional vendor EDID. Heuristic:
-        // treat builtin as physical; for externals, check localized name via NSScreen if available.
+    /// - Parameter totalOnline: when a lone non-builtin display has an unknown name on a
+    ///   headless Mac mini, treat it as Sidecar/virtual so we do not "stand aside" forever.
+    private static func isLikelySidecarOrVirtual(_ id: CGDirectDisplayID, totalOnline: Int) -> Bool {
         if CGDisplayIsBuiltin(id) != 0 { return false }
 
         #if canImport(AppKit)
-        // Deferred to AppKit helper to avoid hard link issues in pure CLI contexts.
-        return AppKitDisplayNames.isSidecarLike(id)
+        if let known = AppKitDisplayNames.sidecarLikeness(id) {
+            return known
+        }
+        // Unknown non-builtin name: alone ⇒ assume Sidecar/virtual (Mac mini headless).
+        // Multiple displays with an unnamed external ⇒ treat as physical to be safe.
+        return totalOnline == 1
         #else
-        return false
+        return totalOnline == 1
         #endif
     }
 }
 
 #if canImport(AppKit)
-import AppKit
-
 enum AppKitDisplayNames {
-    static func isSidecarLike(_ id: CGDirectDisplayID) -> Bool {
+    /// `true` / `false` when the screen name is conclusive; `nil` if not found / unknown.
+    static func sidecarLikeness(_ id: CGDirectDisplayID) -> Bool? {
         for screen in NSScreen.screens {
             guard let num = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber,
                   CGDirectDisplayID(num.uint32Value) == id else { continue }
@@ -52,11 +55,15 @@ enum AppKitDisplayNames {
                 || name.contains("ipad")
                 || name.contains("airplay")
                 || name.contains("screen sharing")
-                || name.contains("virtual") {
+                || name.contains("virtual")
+                || name.contains("continuit") {
                 return true
             }
+            // Named external panel (e.g. "LG UltraFine", "DELL …") ⇒ physical.
+            if !name.isEmpty { return false }
+            return nil
         }
-        return false
+        return nil
     }
 }
 #endif

@@ -10,7 +10,7 @@
   "lockAfterFirstConnect": true,
   "notifyOnSessionStart": true,
   "appriseURLs": [],
-  "ntfyURL": "https://ntfy.sh/CHANGE-ME-to-a-long-random-topic",
+  "ntfyURL": "",
   "ntfyToken": "",
   "barkURL": "",
   "notifyDedupeSeconds": 30

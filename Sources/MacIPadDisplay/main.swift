@@ -70,7 +70,7 @@ func runCLI(command: String, args: [String]) throws {
     case "status":
         let bridge = try SidecarBridge()
         let prefs = Preferences.load()
-        let query = args.first ?? prefs.iPadName
+        let query = positionalName(args) ?? prefs.iPadName
         if let s = bridge.status(nameQuery: query) {
             print("\(s.connected ? "●" : "○") \(s.name) — \(s.connected ? "connected" : "not connected")")
             exit(s.connected ? 0 : 3)
@@ -81,7 +81,7 @@ func runCLI(command: String, args: [String]) throws {
     case "connect":
         let bridge = try SidecarBridge()
         let prefs = Preferences.load()
-        let query = args.first ?? prefs.iPadName
+        let query = positionalName(args) ?? prefs.iPadName
         let waitSecs = TimeInterval(argValue(args, flag: "--wait") ?? "30") ?? 30
         _ = bridge.waitForDevice(nameQuery: query, timeout: waitSecs)
         var options = SidecarBridge.ConnectOptions(
@@ -95,7 +95,7 @@ func runCLI(command: String, args: [String]) throws {
     case "disconnect":
         let bridge = try SidecarBridge()
         let prefs = Preferences.load()
-        let query = args.first ?? prefs.iPadName
+        let query = positionalName(args) ?? prefs.iPadName
         try bridge.disconnect(nameQuery: query)
         print("Disconnected")
     case "watch", "agent":
@@ -150,6 +150,24 @@ enum CLIError: Error, CustomStringConvertible {
 func argValue(_ args: [String], flag: String) -> String? {
     guard let i = args.firstIndex(of: flag), i + 1 < args.count else { return nil }
     return args[i + 1]
+}
+
+/// First non-flag positional arg (skips `--wait N`, `--wired`, etc.).
+func positionalName(_ args: [String]) -> String? {
+    var i = 0
+    while i < args.count {
+        let a = args[i]
+        if a == "--wait" {
+            i += 2
+            continue
+        }
+        if a.hasPrefix("--") {
+            i += 1
+            continue
+        }
+        return a
+    }
+    return nil
 }
 
 let usage = """

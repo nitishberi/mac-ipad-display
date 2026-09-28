@@ -40,19 +40,34 @@ final class NotifySink {
 
         Log.info("notify \(event.rawValue): \(title) — \(body)")
 
+        let ntfyURL = Self.sanitizedEndpoint(prefs.ntfyURL)
+        let barkURL = Self.sanitizedEndpoint(prefs.barkURL)
+        let appriseURLs = prefs.appriseURLs.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+
         var sent = false
-        if !prefs.appriseURLs.isEmpty {
-            sent = sendApprise(urls: prefs.appriseURLs, title: title, body: body) || sent
+        if !appriseURLs.isEmpty {
+            sent = sendApprise(urls: appriseURLs, title: title, body: body) || sent
         }
-        if !prefs.ntfyURL.isEmpty {
-            sent = sendNtfy(url: prefs.ntfyURL, token: prefs.ntfyToken, title: title, body: body, priority: priority) || sent
+        if let ntfyURL {
+            sent = sendNtfy(url: ntfyURL, token: prefs.ntfyToken, title: title, body: body, priority: priority) || sent
         }
-        if !prefs.barkURL.isEmpty {
-            sent = sendBark(base: prefs.barkURL, title: title, body: body) || sent
+        if let barkURL {
+            sent = sendBark(base: barkURL, title: title, body: body) || sent
         }
         if !sent {
             Log.warn("notify: no backend configured (set ntfyURL, barkURL, or appriseURLs in config.json)")
         }
+    }
+
+    /// Reject empty / placeholder endpoints so example config cannot leak alerts to a public topic.
+    private static func sanitizedEndpoint(_ raw: String) -> String? {
+        let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.isEmpty { return nil }
+        let lower = s.lowercased()
+        if lower.contains("change-me") || lower.contains("your-private-topic") || lower.contains("yourkey") {
+            return nil
+        }
+        return s
     }
 
     // MARK: - Backends
