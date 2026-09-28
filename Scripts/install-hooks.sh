@@ -12,14 +12,26 @@ if [[ -z "${BIN}" || ! -x "$BIN" ]]; then
 fi
 
 HOST="$(scutil --get ComputerName 2>/dev/null || hostname)"
+# Neutralize shell metacharacters before embedding in hook scripts.
+HOST_SAFE="$(printf '%s' "$HOST" | tr -cd 'A-Za-z0-9._ -' | cut -c1-64)"
+BIN_SAFE="$BIN"
+case "$BIN_SAFE" in
+  *\'* | *\"* | *\$* | *\`* | *\\* | *$'\n'* )
+    echo "Refusing to install hooks: binary path contains unsafe characters: $BIN_SAFE" >&2
+    exit 1
+    ;;
+esac
 
 ensure_hook() {
   local file="$1"
   local event="$2"
   local title="$3"
-  local line="$BIN notify $event \"$title\" \"Host=$HOST method=\${AUTH_METHOD:-unknown} failures=\${TOTAL_FAILURES:-0}\""
+  # Use single-quoted argv where possible; expand only known-safe values.
+  local line
+  line="$(printf '%q notify %q %q "Host=%s method=${AUTH_METHOD:-unknown} failures=${TOTAL_FAILURES:-0}"' \
+    "$BIN_SAFE" "$event" "$title" "$HOST_SAFE")"
   touch "$file"
-  chmod +x "$file"
+  chmod 700 "$file"
   if grep -q 'mac-ipad-display notify' "$file" 2>/dev/null; then
     echo "Hook already present in $file"
   else

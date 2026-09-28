@@ -56,5 +56,14 @@ struct Preferences: Codable, Equatable {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(self)
         try data.write(to: Self.configURL, options: .atomic)
+        // Tokens / Bark keys live here — keep owner-only.
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: Self.configURL.path
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: Self.configDirectory.path
+        )
     }
 }

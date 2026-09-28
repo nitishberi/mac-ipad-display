@@ -79,6 +79,8 @@ final class SidecarBridge {
     }
 
     func listDevices() -> [DeviceInfo] {
+        callLock.lock()
+        defer { callLock.unlock() }
         let available = manager.devices()
         let connected = manager.connectedDevices()
         let connectedIDs = Set(connected.map(Self.deviceID))
@@ -97,10 +99,14 @@ final class SidecarBridge {
     }
 
     func isConnected(nameQuery: String?) -> Bool {
-        firstMatch(in: manager.connectedDevices(), query: nameQuery) != nil
+        callLock.lock()
+        defer { callLock.unlock() }
+        return firstMatch(in: manager.connectedDevices(), query: nameQuery) != nil
     }
 
     func status(nameQuery: String?) -> DeviceInfo? {
+        callLock.lock()
+        defer { callLock.unlock() }
         if let d = firstMatch(in: manager.connectedDevices(), query: nameQuery) {
             return DeviceInfo(name: Self.deviceName(d), identifier: Self.deviceID(d), connected: true)
         }
@@ -114,14 +120,18 @@ final class SidecarBridge {
     func waitForDevice(nameQuery: String?, timeout: TimeInterval, poll: TimeInterval = 0.5) -> DeviceInfo? {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if let d = firstMatch(in: manager.devices(), query: nameQuery)
-                ?? firstMatch(in: manager.connectedDevices(), query: nameQuery) {
-                return DeviceInfo(
-                    name: Self.deviceName(d),
-                    identifier: Self.deviceID(d),
-                    connected: isConnectedObject(d)
+            callLock.lock()
+            let match = firstMatch(in: manager.devices(), query: nameQuery)
+                ?? firstMatch(in: manager.connectedDevices(), query: nameQuery)
+            let info: DeviceInfo? = match.map {
+                DeviceInfo(
+                    name: Self.deviceName($0),
+                    identifier: Self.deviceID($0),
+                    connected: isConnectedObject($0)
                 )
             }
+            callLock.unlock()
+            if let info { return info }
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(poll))
         }
         return nil

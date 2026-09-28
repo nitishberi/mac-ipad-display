@@ -59,12 +59,21 @@ final class NotifySink {
         }
     }
 
-    /// Reject empty / placeholder endpoints so example config cannot leak alerts to a public topic.
+    /// Reject empty / placeholder / cleartext endpoints so alerts cannot leak broadly.
     private static func sanitizedEndpoint(_ raw: String) -> String? {
         let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if s.isEmpty { return nil }
         let lower = s.lowercased()
         if lower.contains("change-me") || lower.contains("your-private-topic") || lower.contains("yourkey") {
+            return nil
+        }
+        // Require TLS for push backends (tokens/keys in transit).
+        if lower.hasPrefix("http://") {
+            Log.warn("notify: refusing cleartext http:// endpoint (use https://)")
+            return nil
+        }
+        if lower.hasPrefix("ntfy://") {
+            Log.warn("notify: use ntfys:// or https:// for ntfy (not cleartext ntfy://)")
             return nil
         }
         return s
