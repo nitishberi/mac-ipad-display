@@ -109,7 +109,7 @@ func runCLI(command: String, args: [String]) throws {
     case "notify-test":
         let notify = NotifySink(prefs: { Preferences.load() })
         let title = argValue(args, flag: "--title") ?? "MacIPadDisplay test"
-        let body = args.last(where: { !$0.hasPrefix("--") && $0 != argValue(args, flag: "--title") }) ?? "Test notification"
+        let body = argValue(args, flag: "--body") ?? "If you see this on your iPhone, notify is configured."
         notify.notify(event: .sessionStart, title: title, body: body, priority: .high)
         print("Sent test notification (check iPhone / logs).")
     case "notify":
